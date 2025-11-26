@@ -1,0 +1,408 @@
+<!--
+  Demo: Detector Humano vs Bot (versión web compacta)
+  Autor: Inti Condo (prototipo) + ChatGPT
+  Fecha: 2025-11
+
+  - Este archivo es un demo para documentar el uso.
+  - Recomendación de licencia (comentario aquí):
+      * Para desarrollo y demos: publicar con MIT (permite uso y modificación).
+      * Si deseas cobrar por usos comerciales y participar en réditos:
+          -> Usa un esquema "dual license": 
+             - Código en repo público bajo "MIT (o Apache 2.0) - uso NO COMERCIAL".
+             - Contactar al autor para licencias COMERCIALES (con contrato).
+      * Otra opción: "Creative Commons NonCommercial" para la demo + licencia comercial por separado.
+  - Instrucciones rápidas:
+      1) Guardar este archivo como index.html
+      2) Abrir en navegador (Chrome/Firefox). Para hosting: subir a GitHub y activar Pages.
+      3) El cuadro de validación inicia al pasar el puntero por encima. Dibuja una línea (≈1s).
+-->
+
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Demo: Validación de Presencia (Micro-movimientos)</title>
+  <style>
+    :root{
+      --bg:#f5f7fa;
+      --card:#ffffff;
+      --accent:#1f8cff;
+      --muted:#6b7280;
+      --success:#27ae60;
+      --danger:#e03b3b;
+      --panel-w:320px;
+      --panel-h:190px;
+    }
+    html,body{height:100%; margin:0; font-family:system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;}
+    body{background:var(--bg); display:flex; align-items:center; justify-content:center; padding:24px;}
+    .frame{width:900px; max-width:100%; display:flex; gap:20px; align-items:flex-start;}
+    .viewer{
+      width:560px; background:linear-gradient(180deg,#000 0,#111 100%); border-radius:8px; overflow:hidden; box-shadow:0 6px 18px rgba(15,23,42,0.12);
+    }
+    /* Simulated streaming area */
+    .player{
+      position:relative;
+      aspect-ratio:16/9;
+      background:linear-gradient(0deg,#111,#000 60%);
+      display:flex; align-items:center; justify-content:center; color:#ddd;
+    }
+    .player .fake-yt{
+      width:90%; height:70%; border-radius:8px; background:linear-gradient(90deg,#222,#333); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:600;
+    }
+    .info{padding:14px; color:var(--muted); font-size:14px; background:linear-gradient(180deg,#fff,#fbfdff);}
+
+    /* Right column: compact validation card */
+    .card{
+      width:320px; background:var(--card); border-radius:10px; box-shadow:0 8px 30px rgba(15,23,42,0.08);
+      padding:18px; display:flex; flex-direction:column; gap:12px;
+    }
+    .card h3{margin:0; font-size:18px;}
+    .card p{margin:0; color:var(--muted); font-size:13px; line-height:1.4;}
+    .panel-wrap{display:flex; gap:10px; align-items:center;}
+    .panel{
+      width:var(--panel-w); height:var(--panel-h); border-radius:8px; background:#fff; border:1px dashed #d6d9df; position:relative; overflow:hidden;
+      display:flex; align-items:center; justify-content:center;
+    }
+    .panel.small-instr{font-size:12px; color:var(--muted);}
+    canvas{display:block;}
+    .controls{display:flex; gap:8px; margin-top:6px; align-items:center;}
+    button{
+      padding:8px 12px; border-radius:8px; border:0; font-weight:600; cursor:pointer;
+      box-shadow:0 6px 14px rgba(31,140,255,0.12);
+    }
+    .btn-retry{background:#ffdca8; color:#6b3c00;}
+    .btn-continue{background:var(--success); color:#fff;}
+    .btn-disabled{background:#e6e9ed; color:#989ea6; cursor:not-allowed; box-shadow:none;}
+    .result{font-weight:700; font-size:14px;}
+    .small{font-size:12px; color:var(--muted);}
+    .status-dot{display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px; vertical-align:middle;}
+    .footer-note{font-size:12px; color:#9aa3b2; margin-top:6px;}
+  </style>
+</head>
+<body>
+  <div class="frame" role="main">
+    <!-- Simulated streaming viewer -->
+    <div class="viewer" aria-hidden="true">
+      <div class="player">
+        <!-- Simulated embedded video / website -->
+        <div class="fake-yt">YouTube / Streaming player (simulado)</div>
+      </div>
+      <div class="info">Reproduciendo: "Demo de video — Validación silenciosa" · 1:23:45</div>
+    </div>
+
+    <!-- Compact validation card -->
+    <div class="card" aria-live="polite">
+      <h3>Verificación de presencia</h3>
+      <p class="small">Para continuar con la reproducción, realiza un pequeño gesto dentro del recuadro. No necesitas hacer clics: basta con mover el cursor o trazar una línea breve (~1s).</p>
+
+      <div class="panel-wrap">
+        <div class="panel" id="panel" aria-label="Área de validación">
+          <div id="panel-instruction" class="panel small-instr">Pase el cursor aquí y dibuje una línea breve</div>
+          <canvas id="cv" width="320" height="190" style="position:absolute; left:0; top:0;"></canvas>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button id="retry" class="btn-retry">↻</button>
+        <button id="continue" class="btn-disabled" disabled>Continuar</button>
+        <div style="flex:1"></div>
+        <div class="result" id="resultText">Estado: <span id="state">Pendiente</span></div>
+      </div>
+
+      <div class="footer-note">Privacidad: este demo no usa cámara ni envía datos a servidores.</div>
+    </div>
+  </div>
+
+  <script>
+  /* Demo JS: detector por micro-movimientos (versión compacta).
+     - Cada intento borra la canvas y comienza limpio.
+     - Se inicia la captura cuando el cursor entra y el usuario mueve el puntero.
+     - Se detiene al salir o después de un breve lapso sin movimiento.
+  */
+
+  // ----- Variables de captura -----
+  const panel = document.getElementById('panel');
+  const canvas = document.getElementById('cv');
+  const ctx = canvas.getContext('2d');
+  const retryBtn = document.getElementById('retry');
+  const continueBtn = document.getElementById('continue');
+  const stateSpan = document.getElementById('state');
+  const instr = document.getElementById('panel-instruction');
+
+  let pts = [];      // {x,y,t}
+  let collecting = false;
+  let lastMoveTime = 0;
+  let analyzeTimer = null;
+
+  // configuración
+  const MIN_POINTS = 6;
+  const IDLE_TIMEOUT = 750; // ms después del último movimiento para considerar fin
+  const MAX_CAPTURE_TIME = 2500; // ms límite por intento
+
+  // ---- Init UI ----
+  resetCanvas();
+  updateState('Pendiente');
+
+  // ----- eventos pointer -----
+  panel.addEventListener('pointerenter', (e) => {
+    // al entrar, mostramos instrucción leve
+    instr.style.opacity = '0.7';
+  });
+
+  panel.addEventListener('pointerleave', (e) => {
+    // si salimos mientras capturamos, terminar intento
+    if (collecting) endCapture();
+    instr.style.opacity = '1';
+  });
+
+  panel.addEventListener('pointerdown', (e) => {
+    // opcional: no pedimos click, pero si lo hacen, iniciamos captura igual
+    startCapture(e);
+  });
+
+  panel.addEventListener('pointermove', (e) => {
+    // Si el cursor está dentro y hay movimiento, iniciamos captura automáticamente una vez
+    const rect = panel.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const now = performance.now();
+
+    // Solo iniciar si el puntero está dentro panel (pointermove solo ocurre cuando está dentro por pointer capture)
+    if (!collecting) {
+      // iniciar cuando se detecta el primer movimiento dentro del panel (sin requerir click)
+      startCapture(e);
+    } else {
+      // registro y dibujo
+      recordPoint(x, y, now);
+    }
+
+    lastMoveTime = now;
+    // reiniciamos el timer que decide final de captura por inactividad
+    if (analyzeTimer) clearTimeout(analyzeTimer);
+    analyzeTimer = setTimeout(() => {
+      endCapture();
+    }, IDLE_TIMEOUT);
+  });
+
+  // También permitir touch (móvil) por si prueban ahí
+  panel.addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    startCapture({clientX: t.clientX, clientY: t.clientY});
+    e.preventDefault();
+  }, {passive:false});
+
+  panel.addEventListener('touchmove', (e) => {
+    const rect = panel.getBoundingClientRect();
+    const t = e.touches[0];
+    const x = t.clientX - rect.left;
+    const y = t.clientY - rect.top;
+    recordPoint(x, y, performance.now());
+    if (analyzeTimer) clearTimeout(analyzeTimer);
+    analyzeTimer = setTimeout(() => { endCapture(); }, IDLE_TIMEOUT);
+    e.preventDefault();
+  }, {passive:false});
+
+  // retry button
+  retryBtn.addEventListener('click', () => {
+    resetCanvas();
+    updateState('Pendiente');
+  });
+
+  // continue button (accion ejemplo)
+  continueBtn.addEventListener('click', () => {
+    if (!continueBtn.disabled) {
+      alert('Validación aprobada — acción permitida (ejemplo).');
+    }
+  });
+
+  // ----- Funciones de control -----
+  function startCapture(e) {
+    // limpiar intento anterior
+    resetCanvas();
+    pts = [];
+    collecting = true;
+    lastMoveTime = performance.now();
+    instr.style.display = 'none';
+    // si fue pointerdown/first move, registrar punto inicial
+    const rect = panel.getBoundingClientRect();
+    let x = (e.clientX !== undefined) ? e.clientX - rect.left : rect.width/2;
+    let y = (e.clientY !== undefined) ? e.clientY - rect.top : rect.height/2;
+    recordPoint(x, y, performance.now());
+    // forzar timer maximo
+    setTimeout(() => {
+      if (collecting) endCapture();
+    }, MAX_CAPTURE_TIME);
+  }
+
+  function recordPoint(x, y, t) {
+    // normalizar dentro del canvas
+    x = Math.max(0, Math.min(canvas.width, x));
+    y = Math.max(0, Math.min(canvas.height, y));
+    pts.push({x: x, y: y, t: t/1000.0}); // segundos
+    drawPath(); 
+  }
+
+  function endCapture() {
+    if (!collecting) return;
+    collecting = false;
+    instr.style.display = '';
+    // cancel timer
+    if (analyzeTimer) { clearTimeout(analyzeTimer); analyzeTimer = null; }
+    if (pts.length >= MIN_POINTS) {
+      const res = analyzeMovement();
+      if (res === 'HUMANO') {
+        updateState('HUMANO', true);
+      } else {
+        updateState('POTENCIAL BOT', false);
+      }
+    } else {
+      updateState('Insuficiente - intenta de nuevo', false);
+    }
+  }
+
+  // ----- Dibujo -----
+  function resetCanvas() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    // fondo blanco limpísimo por intento
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+    // pequeña guía visual
+    ctx.fillStyle = '#f6f9fc';
+    ctx.fillRect(8,8,canvas.width-16,canvas.height-16);
+    ctx.strokeStyle = '#e6ecf4';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(8,8,canvas.width-16,canvas.height-16);
+    // reset UI
+    continueBtn.disabled = true;
+    continueBtn.className = 'btn-disabled';
+    pts = [];
+    collecting = false;
+  }
+
+  function drawPath() {
+    // limpiamos la capa y redibujamos solo la trayectoria actual
+    // (cada intento empieza con canvas limpio, por eso no queda rastro)
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // fondo claro
+    ctx.fillStyle = '#fbfdff';
+    ctx.fillRect(8,8,canvas.width-16,canvas.height-16);
+
+    if (pts.length < 2) return;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(31,140,255,0.95)';
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i=1;i<pts.length;i++){
+      ctx.lineTo(pts[i].x, pts[i].y);
+    }
+    ctx.stroke();
+
+    // dibujar punta
+    const last = pts[pts.length-1];
+    ctx.fillStyle = '#1f8cff';
+    ctx.beginPath();
+    ctx.arc(last.x, last.y, 5, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // ----- Análisis (similar a Processing) -----
+  function analyzeMovement() {
+    // calcular desviación promedio respecto a línea entre primer y último punto
+    const desviacion = calcularDesviacion();
+    const varVel = calcularVariacionVelocidad();
+    const varTiempo = calcularVariacionTiempo();
+    const varAcc = calcularVariacionAceleracion();
+
+    // umbrales: ajustes heurísticos (puedes calibrarlos con datos reales)
+    const humano = (desviacion > 1.5) && (varVel > 0.10) && (varTiempo > 0.005) && (varAcc > 0.05);
+    console.log('metrics', {desviacion, varVel, varTiempo, varAcc, humano});
+    return humano ? 'HUMANO' : 'POTENCIAL BOT';
+  }
+
+  function calcularDesviacion() {
+    if (pts.length < 2) return 0;
+    const start = pts[0];
+    const end = pts[pts.length-1];
+    const line = {x: end.x - start.x, y: end.y - start.y};
+    const lineMag = Math.hypot(line.x, line.y);
+    if (lineMag === 0) return 0;
+    let total = 0;
+    for (const p of pts) {
+      total += distToLine(p, start, line, lineMag);
+    }
+    return total / pts.length;
+  }
+
+  function distToLine(p, a, line, lineMag) {
+    // cross product magnitude / |line|
+    const ap = {x: p.x - a.x, y: p.y - a.y};
+    const cross = Math.abs(ap.x * line.y - ap.y * line.x);
+    return cross / lineMag;
+  }
+
+  function calcularVariacionVelocidad() {
+    const vel = [];
+    for (let i=1;i<pts.length;i++){
+      const dx = pts[i].x - pts[i-1].x;
+      const dy = pts[i].y - pts[i-1].y;
+      const dt = pts[i].t - pts[i-1].t;
+      if (dt > 0) vel.push(Math.hypot(dx,dy) / dt);
+    }
+    return coefVariacion(vel);
+  }
+
+  function calcularVariacionTiempo() {
+    const dif = [];
+    for (let i=1;i<pts.length;i++){
+      dif.push(pts[i].t - pts[i-1].t);
+    }
+    return coefVariacion(dif);
+  }
+
+  function calcularVariacionAceleracion() {
+    const vel = [];
+    const acc = [];
+    for (let i=1;i<pts.length;i++){
+      const dx = pts[i].x - pts[i-1].x;
+      const dy = pts[i].y - pts[i-1].y;
+      const dt = pts[i].t - pts[i-1].t;
+      if (dt > 0) vel.push(Math.hypot(dx,dy) / dt);
+    }
+    for (let i=1;i<vel.length;i++){
+      // para dt usamos diferencia de tiempos entre esos instantes
+      const dt = pts[i+1] ? (pts[i+1].t - pts[i].t) : (pts[i].t - pts[i-1].t);
+      if (dt > 0) acc.push((vel[i] - vel[i-1]) / dt);
+    }
+    return coefVariacion(acc);
+  }
+
+  function coefVariacion(arr) {
+    if (!arr || arr.length < 2) return 0;
+    let sum = 0;
+    for (const v of arr) sum += v;
+    const mean = sum / arr.length;
+    let sd = 0;
+    for (const v of arr) sd += Math.pow(v - mean, 2);
+    sd = Math.sqrt(sd / (arr.length - 1));
+    return mean === 0 ? 0 : sd / mean;
+  }
+
+  // ----- UI updates -----
+  function updateState(text, ok=false) {
+    stateSpan.textContent = text;
+    if (ok) {
+      continueBtn.disabled = false;
+      continueBtn.className = 'btn-continue';
+    } else {
+      continueBtn.disabled = true;
+      continueBtn.className = 'btn-disabled';
+    }
+  }
+
+  </script>
+</body>
+</html>
